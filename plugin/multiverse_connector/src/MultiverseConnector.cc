@@ -1,24 +1,69 @@
 #include "MultiverseConnector.h"
 
-bool is_attribute_valid(const std::string &attr_name, int &attr_size)
+bool is_attribute_valid(EntityComponentManager &ecm, const Entity &entity, const std::string &attr_name, int &attr_size)
 {
     if (strcmp(attr_name.c_str(), "position") == 0)
     {
+        if (!ecm.Component<components::Pose>(entity))
+        {
+            return false;
+        }
+        gzmsg << "Attribute " << attr_name << " of " << entity << " is valid" << std::endl;
         attr_size = 3;
         return true;
     }
     else if (strcmp(attr_name.c_str(), "quaternion") == 0)
     {
+        if (!ecm.Component<components::Pose>(entity))
+        {
+            return false;
+        }
         attr_size = 4;
         return true;
     }
-    else if (strcmp(attr_name.c_str(), "relative_velocity") == 0)
+    else if (strcmp(attr_name.c_str(), "linear_velocity") == 0)
     {
-        attr_size = 6;
+        if (!ecm.Component<components::LinearVelocity>(entity))
+        {
+            return false;
+        }
+        attr_size = 3;
+        return true;
+    }
+    else if (strcmp(attr_name.c_str(), "angular_velocity") == 0)
+    {
+        if (!ecm.Component<components::AngularVelocity>(entity))
+        {
+            return false;
+        }
+        attr_size = 3;
+        return true;
+    }
+    else if (strcmp(attr_name.c_str(), "linear_acceleration") == 0)
+    {
+        if (!ecm.Component<components::WorldLinearAcceleration>(entity))
+        {
+            return false;
+        }
+        attr_size = 3;
+        return true;
+    }
+    else if (strcmp(attr_name.c_str(), "angular_acceleration") == 0)
+    {
+        if (!ecm.Component<components::WorldAngularAcceleration>(entity))
+        {
+            return false;
+        }
+        attr_size = 3;
         return true;
     }
     else if (strcmp(attr_name.c_str(), "odometric_velocity") == 0)
     {
+        if (!ecm.Component<components::LinearVelocity>(entity) ||
+            !ecm.Component<components::AngularVelocity>(entity))
+        {
+            return false;
+        }
         attr_size = 6;
         return true;
     }
@@ -31,6 +76,12 @@ bool is_attribute_valid(const std::string &attr_name, int &attr_size)
     {
         attr_size = 3;
         return true;
+    }
+    else
+    {
+        gzwarn << "Attribute " << attr_name << " is not valid" << std::endl;
+        attr_size = 0;
+        return false;
     }
 }
 
@@ -82,8 +133,6 @@ void MultiverseConnector::Configure(const Entity &_entity,
                                     EntityComponentManager &_ecm,
                                     EventManager & /*_eventMgr*/)
 {
-    model = gz::sim::Model(_entity);
-
     if (_sdf && _sdf->HasElement(host_str))
     {
         config.host = _sdf->Get<std::string>(host_str);
@@ -109,22 +158,34 @@ void MultiverseConnector::Configure(const Entity &_entity,
         std::string send_json_str = _sdf->Get<std::string>(send_str);
         replace_all(send_json_str, "'", "\"");
         Json::Value send_json = string_to_json(send_json_str);
-        _ecm.Each<components::Model, components::Name>(
-            [&](const Entity &,
-                const components::Model *,
+        _ecm.Each<components::Link, components::Name>(
+            [&](const Entity &entity,
+                const components::Link *,
                 const components::Name *name) -> bool
             {
-                const std::string &model_name = name->Data();
-                if (send_json.isMember(model_name) || send_json.isMember("body"))
+                const std::string &link_name = name->Data();
+                if (send_json.isMember(link_name) || send_json.isMember("body"))
                 {
-                    config.send_objects[model_name] = {};
-                    for (const Json::Value &attribute_json : send_json[send_json.isMember(model_name) ? model_name : "body"])
+                    config.send_objects[link_name] = {};
+                    for (const Json::Value &attribute_json : send_json[send_json.isMember(link_name) ? link_name : "body"])
                     {
                         const std::string attribute_name = attribute_json.asString();
-                        int attr_size = 0;
-                        if (is_attribute_valid(model_name, attr_size))
+                        if (strcmp(attribute_name.c_str(), "linear_velocity") == 0)
                         {
-                            config.send_objects[model_name].insert(attribute_name);
+                            _ecm.CreateComponent(entity, components::LinearVelocity());
+                        }
+                        else if (strcmp(attribute_name.c_str(), "angular_velocity") == 0)
+                        {
+                            _ecm.CreateComponent(entity, components::AngularVelocity());
+                        }
+                        int attr_size = 0;
+                        if (is_attribute_valid(_ecm, entity, attribute_name, attr_size))
+                        {
+                            if (object_entities.find(link_name) == object_entities.end())
+                            {
+                                object_entities[link_name] = entity;
+                            }
+                            config.send_objects[link_name].insert(attribute_name);
                         }
                     }
                 }
@@ -137,22 +198,22 @@ void MultiverseConnector::Configure(const Entity &_entity,
         std::string receive_json_str = _sdf->Get<std::string>(receive_str);
         replace_all(receive_json_str, "'", "\"");
         Json::Value receive_json = string_to_json(receive_json_str);
-        _ecm.Each<components::Model, components::Name>(
-            [&](const Entity &,
-                const components::Model *,
+        _ecm.Each<components::Link, components::Name>(
+            [&](const Entity &entity,
+                const components::Link *,
                 const components::Name *name) -> bool
             {
-                const std::string &model_name = name->Data();
-                if (receive_json.isMember(model_name) || receive_json.isMember("body"))
+                const std::string &link_name = name->Data();
+                if (receive_json.isMember(link_name) || receive_json.isMember("body"))
                 {
-                    config.receive_objects[model_name] = {};
-                    for (const Json::Value &attribute_json : receive_json[receive_json.isMember(model_name) ? model_name : "body"])
+                    config.receive_objects[link_name] = {};
+                    for (const Json::Value &attribute_json : receive_json[receive_json.isMember(link_name) ? link_name : "body"])
                     {
                         const std::string attribute_name = attribute_json.asString();
                         int attr_size = 0;
-                        if (is_attribute_valid(model_name, attr_size))
+                        if (is_attribute_valid(_ecm, entity, attribute_name, attr_size))
                         {
-                            config.receive_objects[model_name].insert(attribute_name);
+                            config.receive_objects[link_name].insert(attribute_name);
                         }
                     }
                 }
@@ -182,37 +243,72 @@ void MultiverseConnector::PreUpdate(
 
     int i = 0;
     gz::math::Pose3d tmp_body_pose;
+    gz::math::Vector3d tmp_body_linear_velocity;
+    gz::math::Vector3d tmp_body_angular_velocity;
     for (const std::pair<const std::string, std::set<std::string>> &send_object : config.send_objects)
     {
         const std::string &object_name = send_object.first;
         if (send_object.second.find("position") != send_object.second.end() ||
             send_object.second.find("quaternion") != send_object.second.end() ||
-            send_object.second.find("relative_velocity") != send_object.second.end())
+            send_object.second.find("linear_velocity") != send_object.second.end() ||
+            send_object.second.find("angular_velocity") != send_object.second.end())
         {
-            const Entity body_entity = model.ModelByName(_ecm, object_name);
-            if (send_object.second.find("position") != send_object.second.end() ||
-                send_object.second.find("quaternion") != send_object.second.end())
+            const Entity body_entity = object_entities[object_name];
+            tmp_body_pose = worldPose(body_entity, _ecm);
+        }
+        if (send_object.second.find("linear_velocity") != send_object.second.end() ||
+            send_object.second.find("angular_velocity") != send_object.second.end())
+        {
+            const Entity body_entity = object_entities[object_name];
+            if (send_object.second.find("linear_velocity") != send_object.second.end())
             {
-                tmp_body_pose = worldPose(body_entity, _ecm);
+                components::LinearVelocity *lin_vel = _ecm.Component<components::LinearVelocity>(body_entity);
+                if (!lin_vel)
+                {
+                    gzwarn << "Link [" << object_name
+                           << "] does not have a LinearVelocity component" << std::endl;
+                    continue;
+                };
+                tmp_body_linear_velocity = tmp_body_pose.Rot().RotateVector(lin_vel->Data());
+            }
+            else if (send_object.second.find("angular_velocity") != send_object.second.end())
+            {
+                components::AngularVelocity *ang_vel = _ecm.Component<components::AngularVelocity>(body_entity);
+                if (!ang_vel)
+                {
+                    gzwarn << "Link [" << object_name
+                           << "] does not have a AngularVelocity component" << std::endl;
+                    continue;
+                }
+                tmp_body_angular_velocity = tmp_body_pose.Rot().RotateVector(ang_vel->Data());
             }
         }
         for (const std::string &attribute_name : send_object.second)
         {
-            if (strcmp(attribute_name.c_str(), "position") == 0 || strcmp(attribute_name.c_str(), "quaternion") == 0)
+            if (strcmp(attribute_name.c_str(), "position") == 0)
             {
-                if (strcmp(attribute_name.c_str(), "position") == 0)
-                {
-                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Pos()[0];
-                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Pos()[1];
-                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Pos()[2];
-                }
-                else if (strcmp(attribute_name.c_str(), "quaternion") == 0)
-                {
-                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().X();
-                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().Y();
-                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().Z();
-                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().W();
-                }
+                send_buffer.buffer_double.data[i++] = tmp_body_pose.Pos()[0];
+                send_buffer.buffer_double.data[i++] = tmp_body_pose.Pos()[1];
+                send_buffer.buffer_double.data[i++] = tmp_body_pose.Pos()[2];
+            }
+            else if (strcmp(attribute_name.c_str(), "quaternion") == 0)
+            {
+                send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().X();
+                send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().Y();
+                send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().Z();
+                send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().W();
+            }
+            else if (strcmp(attribute_name.c_str(), "linear_velocity") == 0)
+            {
+                send_buffer.buffer_double.data[i++] = tmp_body_linear_velocity.X();
+                send_buffer.buffer_double.data[i++] = tmp_body_linear_velocity.Y();
+                send_buffer.buffer_double.data[i++] = tmp_body_linear_velocity.Z();
+            }
+            else if (strcmp(attribute_name.c_str(), "angular_velocity") == 0)
+            {
+                send_buffer.buffer_double.data[i++] = tmp_body_angular_velocity.X();
+                send_buffer.buffer_double.data[i++] = tmp_body_angular_velocity.Y();
+                send_buffer.buffer_double.data[i++] = tmp_body_angular_velocity.Z();
             }
         }
     }
@@ -336,6 +432,7 @@ void MultiverseConnector::bind_api_callbacks_response()
 
 void MultiverseConnector::bind_response_meta_data()
 {
+    gzmsg << "Response JSON: " << response_meta_data_json.toStyledString() << std::endl;
 }
 
 void MultiverseConnector::init_send_and_receive_data()

@@ -13,6 +13,10 @@
 #include <gz/sim/components/JointType.hh>
 #include <gz/sim/components/ParentEntity.hh>
 #include <gz/sim/components/Pose.hh>
+#include <gz/sim/components/LinearVelocity.hh>
+#include <gz/sim/components/AngularVelocity.hh>
+#include <gz/sim/components/LinearAcceleration.hh>
+#include <gz/sim/components/AngularAcceleration.hh>
 #include <gz/sim/components/JointPosition.hh>
 #include <gz/plugin/Register.hh>
 
@@ -56,7 +60,7 @@ class MultiverseConnector
 private:
     MultiverseConfig config;
 
-    gz::sim::Model model;
+    std::map<std::string, Entity> object_entities;
 
 private:
     void start_connect_to_server_thread() override;

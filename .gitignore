@@ -42,3 +42,4 @@
 
 .vscode
 gazebo_ws
+plugin/multiverse_connector/build
