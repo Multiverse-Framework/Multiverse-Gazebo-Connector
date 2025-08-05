@@ -1,62 +1,36 @@
 #include "MultiverseConnector.h"
 
-enum class EObjectType : unsigned char
+bool is_attribute_valid(const std::string &attr_name, int &attr_size)
 {
-    LINK = 0,
-    JOINT = 1,
-};
-
-bool is_attribute_valid(const std::string &obj_name, const std::string &attr_name, const EObjectType &object_type, int &attr_size)
-{
-    switch (object_type)
+    if (strcmp(attr_name.c_str(), "position") == 0)
     {
-    case EObjectType::LINK:
-    {
-        if (strcmp(attr_name.c_str(), "position") == 0)
-        {
-            attr_size = 3;
-            return true;
-        }
-        else if (strcmp(attr_name.c_str(), "quaternion") == 0)
-        {
-            attr_size = 4;
-            return true;
-        }
-        else if (strcmp(attr_name.c_str(), "relative_velocity") == 0)
-        {
-            attr_size = 6;
-            return true;
-        }
-        else if (strcmp(attr_name.c_str(), "odometric_velocity") == 0)
-        {
-            attr_size = 6;
-            return true;
-        }
-        else if (strcmp(attr_name.c_str(), "force") == 0)
-        {
-            attr_size = 3;
-            return true;
-        }
-        else if (strcmp(attr_name.c_str(), "torque") == 0)
-        {
-            attr_size = 3;
-            return true;
-        }
+        attr_size = 3;
+        return true;
     }
-
-    case EObjectType::JOINT:
+    else if (strcmp(attr_name.c_str(), "quaternion") == 0)
     {
-        const std::set<const char *> joint_attributes = {"joint_rvalue", "joint_angular_velocity", "joint_angular_acceleration", "joint_torque"};
-        if (std::find(joint_attributes.begin(), joint_attributes.end(), attr_name) != joint_attributes.end())
-        {
-            attr_size = 1;
-            return true;
-        }
+        attr_size = 4;
+        return true;
     }
-
-    default:
-        gzwarn << "Object type " << static_cast<int>(object_type) << " is not supported" << std::endl;
-        return false;
+    else if (strcmp(attr_name.c_str(), "relative_velocity") == 0)
+    {
+        attr_size = 6;
+        return true;
+    }
+    else if (strcmp(attr_name.c_str(), "odometric_velocity") == 0)
+    {
+        attr_size = 6;
+        return true;
+    }
+    else if (strcmp(attr_name.c_str(), "force") == 0)
+    {
+        attr_size = 3;
+        return true;
+    }
+    else if (strcmp(attr_name.c_str(), "torque") == 0)
+    {
+        attr_size = 3;
+        return true;
     }
 }
 
@@ -148,7 +122,7 @@ void MultiverseConnector::Configure(const Entity &_entity,
                     {
                         const std::string attribute_name = attribute_json.asString();
                         int attr_size = 0;
-                        if (is_attribute_valid(model_name, attribute_name, EObjectType::LINK, attr_size))
+                        if (is_attribute_valid(model_name, attr_size))
                         {
                             config.send_objects[model_name].insert(attribute_name);
                         }
@@ -160,9 +134,31 @@ void MultiverseConnector::Configure(const Entity &_entity,
     }
     if (_sdf && _sdf->HasElement(receive_str))
     {
-        std::string send_json_str = _sdf->Get<std::string>(receive_str);
-        replace_all(send_json_str, "'", "\"");
-        gzmsg << "Receive JSON: " << send_json_str << std::endl;
+        std::string receive_json_str = _sdf->Get<std::string>(receive_str);
+        replace_all(receive_json_str, "'", "\"");
+        Json::Value receive_json = string_to_json(receive_json_str);
+        _ecm.Each<components::Model, components::Name>(
+            [&](const Entity &,
+                const components::Model *,
+                const components::Name *name) -> bool
+            {
+                const std::string &model_name = name->Data();
+                if (receive_json.isMember(model_name) || receive_json.isMember("body"))
+                {
+                    config.receive_objects[model_name] = {};
+                    for (const Json::Value &attribute_json : receive_json[receive_json.isMember(model_name) ? model_name : "body"])
+                    {
+                        const std::string attribute_name = attribute_json.asString();
+                        int attr_size = 0;
+                        if (is_attribute_valid(model_name, attr_size))
+                        {
+                            config.receive_objects[model_name].insert(attribute_name);
+                        }
+                    }
+                }
+                return true;
+            });
+        gzmsg << "Receive JSON: " << receive_json_str << std::endl;
     }
 
     host = config.host;
@@ -185,27 +181,37 @@ void MultiverseConnector::PreUpdate(
     *world_time = _info.simTime.count() / 1E9;
 
     int i = 0;
+    gz::math::Pose3d tmp_body_pose;
     for (const std::pair<const std::string, std::set<std::string>> &send_object : config.send_objects)
     {
         const std::string &object_name = send_object.first;
+        if (send_object.second.find("position") != send_object.second.end() ||
+            send_object.second.find("quaternion") != send_object.second.end() ||
+            send_object.second.find("relative_velocity") != send_object.second.end())
+        {
+            const Entity body_entity = model.ModelByName(_ecm, object_name);
+            if (send_object.second.find("position") != send_object.second.end() ||
+                send_object.second.find("quaternion") != send_object.second.end())
+            {
+                tmp_body_pose = worldPose(body_entity, _ecm);
+            }
+        }
         for (const std::string &attribute_name : send_object.second)
         {
             if (strcmp(attribute_name.c_str(), "position") == 0 || strcmp(attribute_name.c_str(), "quaternion") == 0)
             {
-                Entity entity = model.ModelByName(_ecm, object_name);
-                auto world_pose = worldPose(entity, _ecm);
                 if (strcmp(attribute_name.c_str(), "position") == 0)
                 {
-                    send_buffer.buffer_double.data[i++] = world_pose.Pos()[0];
-                    send_buffer.buffer_double.data[i++] = world_pose.Pos()[1];
-                    send_buffer.buffer_double.data[i++] = world_pose.Pos()[2];
+                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Pos()[0];
+                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Pos()[1];
+                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Pos()[2];
                 }
                 else if (strcmp(attribute_name.c_str(), "quaternion") == 0)
                 {
-                    send_buffer.buffer_double.data[i++] = world_pose.Rot().X();
-                    send_buffer.buffer_double.data[i++] = world_pose.Rot().Y();
-                    send_buffer.buffer_double.data[i++] = world_pose.Rot().Z();
-                    send_buffer.buffer_double.data[i++] = world_pose.Rot().W();
+                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().X();
+                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().Y();
+                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().Z();
+                    send_buffer.buffer_double.data[i++] = tmp_body_pose.Rot().W();
                 }
             }
         }
@@ -222,7 +228,6 @@ void MultiverseConnector::Update(
 void MultiverseConnector::PostUpdate(const UpdateInfo &_info,
                                      const EntityComponentManager &_ecm)
 {
-    
 }
 
 void MultiverseConnector::start_connect_to_server_thread()
