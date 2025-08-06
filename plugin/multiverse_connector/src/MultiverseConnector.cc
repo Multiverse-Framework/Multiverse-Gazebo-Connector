@@ -81,7 +81,10 @@ void MultiverseConnector::Configure(const Entity &_entity,
                 const std::string &link_name = name->Data();
                 if (send_json.isMember(link_name) || send_json.isMember("body"))
                 {
-                    config.send_objects[link_name] = {};
+                    if (config.send_objects.find(link_name) == config.send_objects.end())
+                    {
+                        config.send_objects[link_name] = {};
+                    }
                     const std::string &object_name = send_json.isMember(link_name) ? link_name : "body";
                     bool need_pose = false;
                     bool need_velocity = false;
@@ -113,9 +116,9 @@ void MultiverseConnector::Configure(const Entity &_entity,
                     {
                         const std::string &attribute_name = attribute_json.asString();
                         gzwarn << attribute_name << std::endl;
-                        if (object_entities.find(link_name) == object_entities.end())
+                        if (link_entities.find(link_name) == link_entities.end())
                         {
-                            object_entities[link_name] = entity;
+                            link_entities[link_name] = entity;
                         }
                         config.send_objects[link_name].insert(attribute_name);
                     }
@@ -128,6 +131,43 @@ void MultiverseConnector::Configure(const Entity &_entity,
         std::string receive_json_str = _sdf->Get<std::string>(receive_str);
         replace_all(receive_json_str, "'", "\"");
         Json::Value receive_json = string_to_json(receive_json_str);
+        _ecm.Each<components::Model, components::Name>(
+            [&](const Entity &entity,
+                const components::Model *,
+                const components::Name *name) -> bool
+            {
+                const std::string &model_name = name->Data();
+                if (receive_json.isMember(model_name) || receive_json.isMember("body"))
+                {
+                    if (config.receive_objects.find(model_name) == config.receive_objects.end())
+                    {
+                        config.receive_objects[model_name] = {};
+                    }
+                    for (const Json::Value &attribute_json : receive_json[model_name])
+                    {
+                        const std::string &attribute_name = attribute_json.asString();
+                        if (strcmp(attribute_name.c_str(), "position") == 0 ||
+                            strcmp(attribute_name.c_str(), "quaternion") == 0)
+                        {
+                            _ecm.CreateComponent(entity, components::WorldPoseCmd());
+                        }
+                    }
+                    for (const Json::Value &attribute_json : receive_json[receive_json.isMember(model_name) ? model_name : "body"])
+                    {
+                        const std::string &attribute_name = attribute_json.asString();
+                        if (strcmp(attribute_name.c_str(), "position") == 0 ||
+                            strcmp(attribute_name.c_str(), "quaternion") == 0)
+                        {
+                            if (model_entities.find(model_name) == model_entities.end())
+                            {
+                                model_entities[model_name] = entity;
+                            }
+                            config.receive_objects[model_name].insert(attribute_name);
+                        }
+                    }
+                }
+                return true;
+            });
         _ecm.Each<components::Link, components::Name>(
             [&](const Entity &entity,
                 const components::Link *,
@@ -136,16 +176,19 @@ void MultiverseConnector::Configure(const Entity &_entity,
                 const std::string &link_name = name->Data();
                 if (receive_json.isMember(link_name) || receive_json.isMember("body"))
                 {
-                    config.receive_objects[link_name] = {};
+                    if (config.receive_objects.find(link_name) == config.receive_objects.end())
+                    {
+                        config.receive_objects[link_name] = {};
+                    }
                     for (const Json::Value &attribute_json : receive_json[receive_json.isMember(link_name) ? link_name : "body"])
                     {
                         const std::string attribute_name = attribute_json.asString();
                         if (strcmp(attribute_name.c_str(), "force") == 0 ||
                             strcmp(attribute_name.c_str(), "torque") == 0)
                         {
-                            if (object_entities.find(link_name) == object_entities.end())
+                            if (link_entities.find(link_name) == link_entities.end())
                             {
-                                object_entities[link_name] = entity;
+                                link_entities[link_name] = entity;
                             }
                             config.receive_objects[link_name].insert(attribute_name);
                         }
@@ -183,25 +226,52 @@ void MultiverseConnector::Update(
     for (const std::pair<const std::string, std::set<std::string>> &receive_object : config.receive_objects)
     {
         const std::string &object_name = receive_object.first;
+        gz::math::Vector3d tmp_body_position;
+        gz::math::Quaterniond tmp_body_quaternion;
+        gz::math::Vector3d tmp_body_force;
+        gz::math::Vector3d tmp_body_torque;
+
+        for (const std::string &attribute_name : receive_object.second)
+        {
+            if (strcmp(attribute_name.c_str(), "position") == 0)
+            {
+                tmp_body_position.X() = receive_buffer.buffer_double.data[receive_id++];
+                tmp_body_position.Y() = receive_buffer.buffer_double.data[receive_id++];
+                tmp_body_position.Z() = receive_buffer.buffer_double.data[receive_id++];
+            }
+            else if (strcmp(attribute_name.c_str(), "quaternion") == 0)
+            {
+                tmp_body_quaternion.SetW(receive_buffer.buffer_double.data[receive_id++]);
+                tmp_body_quaternion.SetX(receive_buffer.buffer_double.data[receive_id++]);
+                tmp_body_quaternion.SetY(receive_buffer.buffer_double.data[receive_id++]);
+                tmp_body_quaternion.SetZ(receive_buffer.buffer_double.data[receive_id++]);
+            }
+            else if (strcmp(attribute_name.c_str(), "force") == 0)
+            {
+                tmp_body_force.X() = receive_buffer.buffer_double.data[receive_id++];
+                tmp_body_force.Y() = receive_buffer.buffer_double.data[receive_id++];
+                tmp_body_force.Z() = receive_buffer.buffer_double.data[receive_id++];
+            }
+            else if (strcmp(attribute_name.c_str(), "torque") == 0)
+            {
+                tmp_body_torque.X() = receive_buffer.buffer_double.data[receive_id++];
+                tmp_body_torque.Y() = receive_buffer.buffer_double.data[receive_id++];
+                tmp_body_torque.Z() = receive_buffer.buffer_double.data[receive_id++];
+            }
+        }
+
+        if (receive_object.second.find("position") != receive_object.second.end() ||
+            receive_object.second.find("quaternion") != receive_object.second.end())
+        {
+            const Entity model_entity = model_entities[object_name];
+            Model model = Model(model_entity);
+            model.SetWorldPoseCmd(_ecm, gz::math::Pose3d(tmp_body_position, tmp_body_quaternion));
+        }
         if (receive_object.second.find("force") != receive_object.second.end() ||
             receive_object.second.find("torque") != receive_object.second.end())
         {
-            gz::math::Vector3d tmp_body_force;
-            gz::math::Vector3d tmp_body_torque;
-            if (receive_object.second.find("force") != receive_object.second.end())
-            {
-                tmp_body_force[0] = receive_buffer.buffer_double.data[receive_id++];
-                tmp_body_force[1] = receive_buffer.buffer_double.data[receive_id++];
-                tmp_body_force[2] = receive_buffer.buffer_double.data[receive_id++];
-            }
-            if (receive_object.second.find("torque") != receive_object.second.end())
-            {
-                tmp_body_torque[0] = receive_buffer.buffer_double.data[receive_id++];
-                tmp_body_torque[1] = receive_buffer.buffer_double.data[receive_id++];
-                tmp_body_torque[2] = receive_buffer.buffer_double.data[receive_id++];
-            }
-            const Entity body_entity = object_entities[object_name];
-            gz::sim::v9::Link body = Link(body_entity);
+            const Entity body_entity = link_entities[object_name];
+            Link body = Link(body_entity);
             body.AddWorldWrench(_ecm, tmp_body_force, tmp_body_torque);
         }
     }
@@ -222,7 +292,7 @@ void MultiverseConnector::Update(
             send_object.second.find("linear_velocity") != send_object.second.end() ||
             send_object.second.find("angular_velocity") != send_object.second.end())
         {
-            const Entity body_entity = object_entities[object_name];
+            const Entity body_entity = link_entities[object_name];
             const gz::sim::v9::Link body = Link(body_entity);
             if (send_object.second.find("position") != send_object.second.end() ||
                 send_object.second.find("quaternion") != send_object.second.end())
@@ -242,7 +312,7 @@ void MultiverseConnector::Update(
                 if (!lin_vel_ptr)
                 {
                     gzwarn << "Link [" << object_name
-                            << "] does not have a WorldLinearVelocity component" << std::endl;
+                           << "] does not have a WorldLinearVelocity component" << std::endl;
                     continue;
                 };
                 tmp_body_linear_velocity = *lin_vel_ptr;
@@ -253,7 +323,7 @@ void MultiverseConnector::Update(
                 if (!ang_vel_ptr)
                 {
                     gzwarn << "Link [" << object_name
-                            << "] does not have a AngularVelocity component" << std::endl;
+                           << "] does not have a AngularVelocity component" << std::endl;
                     continue;
                 }
                 tmp_body_angular_velocity = *ang_vel_ptr;
@@ -416,7 +486,6 @@ void MultiverseConnector::bind_api_callbacks_response()
 
 void MultiverseConnector::bind_response_meta_data()
 {
-    
 }
 
 void MultiverseConnector::init_send_and_receive_data()

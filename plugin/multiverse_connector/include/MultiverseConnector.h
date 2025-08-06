@@ -5,10 +5,13 @@
 #include <gz/sim/EntityComponentManager.hh>
 #include <gz/sim/System.hh>
 #include <gz/sim/Link.hh>
+#include <gz/sim/Joint.hh>
 #include <gz/sim/Util.hh>
+#include <gz/sim/components/Model.hh>
 #include <gz/sim/components/Link.hh>
 #include <gz/sim/components/Name.hh>
 #include <gz/sim/components/Pose.hh>
+#include <gz/sim/components/PoseCmd.hh>
 #include <gz/sim/components/LinearVelocity.hh>
 #include <gz/sim/components/AngularVelocity.hh>
 #include <gz/sim/components/LinearAcceleration.hh>
@@ -56,7 +59,9 @@ class MultiverseConnector
 private:
     MultiverseConfig config;
 
-    std::map<std::string, Entity> object_entities;
+    std::map<std::string, Entity> model_entities;
+
+    std::map<std::string, Entity> link_entities;
 
     std::vector<double *> send_data_vec;
 
