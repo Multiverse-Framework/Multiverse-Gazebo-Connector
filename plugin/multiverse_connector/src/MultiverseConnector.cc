@@ -71,7 +71,6 @@ bool is_attribute_valid(EntityComponentManager &ecm, const Entity &entity, const
     {
         if (!ecm.Component<components::ForceTorque>(entity))
         {
-            gzwarn << "Entity [" << entity << "] does not have a ForceTorque component" << std::endl;
             return false;
         }
         attr_size = 3;
@@ -79,6 +78,10 @@ bool is_attribute_valid(EntityComponentManager &ecm, const Entity &entity, const
     }
     else if (strcmp(attr_name.c_str(), "torque") == 0)
     {
+        if (!ecm.Component<components::ForceTorque>(entity))
+        {
+            return false;
+        }
         attr_size = 3;
         return true;
     }
@@ -313,27 +316,25 @@ void MultiverseConnector::PreUpdate(
         {
             const Entity body_entity = object_entities[object_name];
             const gz::sim::v9::Link body = Link(body_entity);
-            auto pose_ptr = body.WorldPose(_ecm);
-            if (!pose_ptr)
+            if (send_object.second.find("position") != send_object.second.end() ||
+                send_object.second.find("quaternion") != send_object.second.end())
             {
-                gzwarn << "Link [" << object_name
-                       << "] does not have a WorldPose component" << std::endl;
-                continue;
+                auto pose_ptr = body.WorldPose(_ecm);
+                if (!pose_ptr)
+                {
+                    gzwarn << "Link [" << object_name
+                           << "] does not have a WorldPose component" << std::endl;
+                    continue;
+                }
+                tmp_body_pose = *pose_ptr;
             }
-            tmp_body_pose = *pose_ptr;
-        }
-        if (send_object.second.find("linear_velocity") != send_object.second.end() ||
-            send_object.second.find("angular_velocity") != send_object.second.end())
-        {
-            const Entity body_entity = object_entities[object_name];
-            const gz::sim::v9::Link body = Link(body_entity);
             if (send_object.second.find("linear_velocity") != send_object.second.end())
             {
                 auto lin_vel_ptr = body.WorldLinearVelocity(_ecm);
                 if (!lin_vel_ptr)
                 {
                     gzwarn << "Link [" << object_name
-                           << "] does not have a WorldLinearVelocity component" << std::endl;
+                            << "] does not have a WorldLinearVelocity component" << std::endl;
                     continue;
                 };
                 tmp_body_linear_velocity = *lin_vel_ptr;
@@ -344,24 +345,16 @@ void MultiverseConnector::PreUpdate(
                 if (!ang_vel_ptr)
                 {
                     gzwarn << "Link [" << object_name
-                           << "] does not have a AngularVelocity component" << std::endl;
+                            << "] does not have a AngularVelocity component" << std::endl;
                     continue;
                 }
                 tmp_body_angular_velocity = *ang_vel_ptr;
             }
-        }
-        if (send_object.second.find("force") != send_object.second.end() ||
-            send_object.second.find("torque") != send_object.second.end())
-        {
-            const Entity body_entity = object_entities[object_name];
-            components::ForceTorque *force_torque = _ecm.Component<components::ForceTorque>(body_entity);
-            if (!force_torque)
+            if (send_object.second.find("force") != send_object.second.end() ||
+                send_object.second.find("torque") != send_object.second.end())
             {
-                gzwarn << "Link [" << object_name
-                       << "] does not have a ForceTorque component" << std::endl;
-                continue;
+                gzerr << "Not implemented yet: force and torque" << std::endl;
             }
-            auto data = force_torque->Data(); // TODO: Get force and torque from ForceTorque component
         }
         for (const std::string &attribute_name : send_object.second)
         {
