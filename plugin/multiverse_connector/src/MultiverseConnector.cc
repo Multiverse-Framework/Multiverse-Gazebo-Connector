@@ -109,18 +109,68 @@ void MultiverseConnector::Configure(const Entity &_entity,
                     }
                     if (need_velocity)
                     {
-                        const gz::sim::v9::Link body = Link(entity);
+                        const Link body = Link(entity);
                         body.EnableVelocityChecks(_ecm, true);
                     }
                     for (const Json::Value &attribute_json : send_json[object_name])
                     {
                         const std::string &attribute_name = attribute_json.asString();
-                        gzwarn << attribute_name << std::endl;
                         if (link_entities.find(link_name) == link_entities.end())
                         {
                             link_entities[link_name] = entity;
                         }
                         config.send_objects[link_name].insert(attribute_name);
+                    }
+                }
+                return true;
+            });
+        _ecm.Each<components::Joint, components::Name>(
+            [&](const Entity &entity,
+                const components::Joint *,
+                const components::Name *name) -> bool
+            {
+                const std::string &joint_name = name->Data();
+                if (send_json.isMember(joint_name) || send_json.isMember("joint"))
+                {
+                    if (config.send_objects.find(joint_name) == config.send_objects.end())
+                    {
+                        config.send_objects[joint_name] = {};
+                    }
+                    const std::string &object_name = send_json.isMember(joint_name) ? joint_name : "joint";
+                    bool need_position = false;
+                    bool need_velocity = false;
+                    for (const Json::Value &attribute_json : send_json[object_name])
+                    {
+                        const std::string &attribute_name = attribute_json.asString();
+                        if (strcmp(attribute_name.c_str(), "joint_angular_position") == 0 ||
+                            strcmp(attribute_name.c_str(), "joint_linear_position") == 0)
+                        {
+                            need_position = true;
+                        }
+                        else if (strcmp(attribute_name.c_str(), "joint_linear_velocity") == 0 ||
+                                 strcmp(attribute_name.c_str(), "joint_angular_velocity") == 0)
+                        {
+                            need_velocity = true;
+                        }
+                    }
+                    if (need_position)
+                    {
+                        const Joint joint = Joint(entity);
+                        joint.EnablePositionCheck(_ecm, true);
+                    }
+                    if (need_velocity)
+                    {
+                        const Joint joint = Joint(entity);
+                        joint.EnableVelocityCheck(_ecm, true);
+                    }
+                    for (const Json::Value &attribute_json : send_json[object_name])
+                    {
+                        const std::string &attribute_name = attribute_json.asString();
+                        if (joint_entities.find(joint_name) == joint_entities.end())
+                        {
+                            joint_entities[joint_name] = entity;
+                        }
+                        config.send_objects[joint_name].insert(attribute_name);
                     }
                 }
                 return true;
@@ -142,15 +192,6 @@ void MultiverseConnector::Configure(const Entity &_entity,
                     if (config.receive_objects.find(model_name) == config.receive_objects.end())
                     {
                         config.receive_objects[model_name] = {};
-                    }
-                    for (const Json::Value &attribute_json : receive_json[model_name])
-                    {
-                        const std::string &attribute_name = attribute_json.asString();
-                        if (strcmp(attribute_name.c_str(), "position") == 0 ||
-                            strcmp(attribute_name.c_str(), "quaternion") == 0)
-                        {
-                            _ecm.CreateComponent(entity, components::WorldPoseCmd());
-                        }
                     }
                     for (const Json::Value &attribute_json : receive_json[receive_json.isMember(model_name) ? model_name : "body"])
                     {
@@ -230,6 +271,7 @@ void MultiverseConnector::Update(
         gz::math::Quaterniond tmp_body_quaternion;
         gz::math::Vector3d tmp_body_force;
         gz::math::Vector3d tmp_body_torque;
+        double tmp_cmd_joint_effort = 0.0;
 
         for (const std::string &attribute_name : receive_object.second)
         {
@@ -258,6 +300,11 @@ void MultiverseConnector::Update(
                 tmp_body_torque.Y() = receive_buffer.buffer_double.data[receive_id++];
                 tmp_body_torque.Z() = receive_buffer.buffer_double.data[receive_id++];
             }
+            else if (strcmp(attribute_name.c_str(), "cmd_joint_torque") == 0 ||
+                     strcmp(attribute_name.c_str(), "cmd_joint_force") == 0)
+            {
+                tmp_cmd_joint_effort = receive_buffer.buffer_double.data[receive_id++];
+            }
         }
 
         if (receive_object.second.find("position") != receive_object.second.end() ||
@@ -274,6 +321,13 @@ void MultiverseConnector::Update(
             Link body = Link(body_entity);
             body.AddWorldWrench(_ecm, tmp_body_force, tmp_body_torque);
         }
+        if (receive_object.second.find("cmd_joint_torce") != receive_object.second.end() ||
+            receive_object.second.find("cmd_joint_forque") != receive_object.second.end())
+        {
+            const Entity joint_entity = joint_entities[object_name];
+            Joint joint = Joint(joint_entity);
+            joint.SetForce(_ecm, {tmp_cmd_joint_effort});
+        }
     }
 
     *world_time = _info.simTime.count() / 1E9;
@@ -284,6 +338,8 @@ void MultiverseConnector::Update(
     gz::math::Vector3d tmp_body_angular_velocity;
     gz::math::Vector3d tmp_body_force;
     gz::math::Vector3d tmp_body_torque;
+    double tmp_joint_position = 0.0;
+    double tmp_joint_velocity = 0.0;
     for (const std::pair<const std::string, std::set<std::string>> &send_object : config.send_objects)
     {
         const std::string &object_name = send_object.first;
@@ -293,7 +349,7 @@ void MultiverseConnector::Update(
             send_object.second.find("angular_velocity") != send_object.second.end())
         {
             const Entity body_entity = link_entities[object_name];
-            const gz::sim::v9::Link body = Link(body_entity);
+            const Link body = Link(body_entity);
             if (send_object.second.find("position") != send_object.second.end() ||
                 send_object.second.find("quaternion") != send_object.second.end())
             {
@@ -334,6 +390,58 @@ void MultiverseConnector::Update(
                 gzerr << "Not implemented yet: force and torque" << std::endl;
             }
         }
+        if (send_object.second.find("joint_angular_position") != send_object.second.end() || send_object.second.find("joint_linear_position") != send_object.second.end() ||
+            send_object.second.find("joint_angular_velocity") != send_object.second.end() || send_object.second.find("joint_linear_velocity") != send_object.second.end())
+        {
+            const Entity joint_entity = joint_entities[object_name];
+            const Joint joint = Joint(joint_entity);
+            if (send_object.second.find("joint_angular_position") != send_object.second.end() ||
+                send_object.second.find("joint_linear_position") != send_object.second.end())
+            {
+                auto joint_pos_ptr = joint.Position(_ecm);
+                if (!joint_pos_ptr)
+                {
+                    gzwarn << "Joint [" << object_name << "] - " << joint_entity
+                           << " - does not have a JointPosition component" << std::endl;
+                    continue;
+                }
+                if (joint_pos_ptr->size() == 0)
+                {
+                    gzwarn << "Joint [" << object_name << "] - " << joint_entity
+                           << " - does not have a JointPosition component with data" << std::endl;
+                    continue;
+                }
+                if (joint_pos_ptr->size() > 1)
+                {
+                    gzwarn << "Joint [" << object_name << "] - " << joint_entity
+                           << " - has more than one position, only the first one will be sent" << std::endl;
+                }
+                tmp_joint_position = (*joint_pos_ptr)[0];
+            }
+            if (send_object.second.find("joint_angular_velocity") != send_object.second.end() ||
+                send_object.second.find("joint_linear_velocity") != send_object.second.end())
+            {
+                auto joint_vel_ptr = joint.Velocity(_ecm);
+                if (!joint_vel_ptr)
+                {
+                    gzwarn << "Joint [" << object_name << "] - " << joint_entity
+                           << " - does not have a JointVelocity component" << std::endl;
+                    continue;
+                }
+                if (joint_vel_ptr->size() == 0)
+                {
+                    gzwarn << "Joint [" << object_name << "] - " << joint_entity
+                           << " - does not have a JointVelocity component with data" << std::endl;
+                    continue;
+                }
+                if (joint_vel_ptr->size() > 1)
+                {
+                    gzwarn << "Joint [" << object_name << "] - " << joint_entity
+                           << " - has more than one velocity, only the first one will be sent" << std::endl;
+                }
+                tmp_joint_velocity = (*joint_vel_ptr)[0];
+            }
+        }
         for (const std::string &attribute_name : send_object.second)
         {
             if (strcmp(attribute_name.c_str(), "position") == 0)
@@ -372,6 +480,21 @@ void MultiverseConnector::Update(
                 send_buffer.buffer_double.data[send_id++] = tmp_body_torque.X();
                 send_buffer.buffer_double.data[send_id++] = tmp_body_torque.Y();
                 send_buffer.buffer_double.data[send_id++] = tmp_body_torque.Z();
+            }
+            else if (strcmp(attribute_name.c_str(), "joint_angular_position") == 0 ||
+                     strcmp(attribute_name.c_str(), "joint_linear_position") == 0)
+            {
+                send_buffer.buffer_double.data[send_id++] = tmp_joint_position;
+            }
+            else if (strcmp(attribute_name.c_str(), "joint_angular_velocity") == 0 ||
+                     strcmp(attribute_name.c_str(), "joint_linear_velocity") == 0)
+            {
+                send_buffer.buffer_double.data[send_id++] = tmp_joint_velocity;
+            }
+            else
+            {
+                gzerr << "Unknown attribute [" << attribute_name << "] for object ["
+                      << object_name << "]" << std::endl;
             }
         }
     }

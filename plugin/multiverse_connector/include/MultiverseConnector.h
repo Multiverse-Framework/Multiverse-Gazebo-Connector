@@ -9,6 +9,7 @@
 #include <gz/sim/Util.hh>
 #include <gz/sim/components/Model.hh>
 #include <gz/sim/components/Link.hh>
+#include <gz/sim/components/Joint.hh>
 #include <gz/sim/components/Name.hh>
 #include <gz/sim/components/Pose.hh>
 #include <gz/sim/components/PoseCmd.hh>
@@ -62,6 +63,8 @@ private:
     std::map<std::string, Entity> model_entities;
 
     std::map<std::string, Entity> link_entities;
+
+    std::map<std::string, Entity> joint_entities;
 
     std::vector<double *> send_data_vec;
 
