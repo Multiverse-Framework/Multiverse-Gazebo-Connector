@@ -1,98 +1,5 @@
 #include "MultiverseConnector.h"
 
-bool is_attribute_valid(EntityComponentManager &ecm, const Entity &entity, const std::string &attr_name, int &attr_size)
-{
-    if (strcmp(attr_name.c_str(), "position") == 0)
-    {
-        if (!ecm.Component<components::WorldPose>(entity))
-        {
-            return false;
-        }
-        gzmsg << "Attribute " << attr_name << " of " << entity << " is valid" << std::endl;
-        attr_size = 3;
-        return true;
-    }
-    else if (strcmp(attr_name.c_str(), "quaternion") == 0)
-    {
-        if (!ecm.Component<components::WorldPose>(entity))
-        {
-            return false;
-        }
-        attr_size = 4;
-        return true;
-    }
-    else if (strcmp(attr_name.c_str(), "linear_velocity") == 0)
-    {
-        if (!ecm.Component<components::WorldLinearVelocity>(entity))
-        {
-            return false;
-        }
-        attr_size = 3;
-        return true;
-    }
-    else if (strcmp(attr_name.c_str(), "angular_velocity") == 0)
-    {
-        if (!ecm.Component<components::WorldAngularVelocity>(entity))
-        {
-            return false;
-        }
-        attr_size = 3;
-        return true;
-    }
-    else if (strcmp(attr_name.c_str(), "linear_acceleration") == 0)
-    {
-        if (!ecm.Component<components::WorldLinearAcceleration>(entity))
-        {
-            return false;
-        }
-        attr_size = 3;
-        return true;
-    }
-    else if (strcmp(attr_name.c_str(), "angular_acceleration") == 0)
-    {
-        if (!ecm.Component<components::WorldAngularAcceleration>(entity))
-        {
-            return false;
-        }
-        attr_size = 3;
-        return true;
-    }
-    else if (strcmp(attr_name.c_str(), "odometric_velocity") == 0)
-    {
-        if (!ecm.Component<components::LinearVelocity>(entity) ||
-            !ecm.Component<components::AngularVelocity>(entity))
-        {
-            return false;
-        }
-        attr_size = 6;
-        return true;
-    }
-    else if (strcmp(attr_name.c_str(), "force") == 0)
-    {
-        if (!ecm.Component<components::ForceTorque>(entity))
-        {
-            return false;
-        }
-        attr_size = 3;
-        return true;
-    }
-    else if (strcmp(attr_name.c_str(), "torque") == 0)
-    {
-        if (!ecm.Component<components::ForceTorque>(entity))
-        {
-            return false;
-        }
-        attr_size = 3;
-        return true;
-    }
-    else
-    {
-        gzwarn << "Attribute " << attr_name << " is not valid" << std::endl;
-        attr_size = 0;
-        return false;
-    }
-}
-
 constexpr char host_str[] = "host";
 constexpr char server_port_str[] = "server_port";
 constexpr char client_port_str[] = "client_port";
@@ -206,20 +113,15 @@ void MultiverseConnector::Configure(const Entity &_entity,
                     {
                         const std::string &attribute_name = attribute_json.asString();
                         gzwarn << attribute_name << std::endl;
-                        int attr_size = 0;
-                        if (is_attribute_valid(_ecm, entity, attribute_name, attr_size))
+                        if (object_entities.find(link_name) == object_entities.end())
                         {
-                            if (object_entities.find(link_name) == object_entities.end())
-                            {
-                                object_entities[link_name] = entity;
-                            }
-                            config.send_objects[link_name].insert(attribute_name);
+                            object_entities[link_name] = entity;
                         }
+                        config.send_objects[link_name].insert(attribute_name);
                     }
                 }
                 return true;
             });
-        gzmsg << "Send JSON: " << send_json_str << std::endl;
     }
     if (_sdf && _sdf->HasElement(receive_str))
     {
@@ -251,7 +153,6 @@ void MultiverseConnector::Configure(const Entity &_entity,
                 }
                 return true;
             });
-        gzmsg << "Receive JSON: " << receive_json_str << std::endl;
     }
 
     host = config.host;
@@ -268,6 +169,13 @@ void MultiverseConnector::Configure(const Entity &_entity,
 }
 
 void MultiverseConnector::PreUpdate(
+    const sim::UpdateInfo &_info,
+    sim::EntityComponentManager &_ecm)
+{
+    communicate();
+}
+
+void MultiverseConnector::Update(
     const sim::UpdateInfo &_info,
     sim::EntityComponentManager &_ecm)
 {
@@ -341,7 +249,7 @@ void MultiverseConnector::PreUpdate(
             }
             if (send_object.second.find("angular_velocity") != send_object.second.end())
             {
-                auto ang_vel_ptr = body.WorldAngularVelocity(_ecm);
+                auto ang_vel_ptr = _ecm.ComponentData<components::AngularVelocity>(body_entity);
                 if (!ang_vel_ptr)
                 {
                     gzwarn << "Link [" << object_name
@@ -397,13 +305,6 @@ void MultiverseConnector::PreUpdate(
             }
         }
     }
-}
-
-void MultiverseConnector::Update(
-    const sim::UpdateInfo &,
-    sim::EntityComponentManager &_ecm)
-{
-    communicate();
 }
 
 void MultiverseConnector::PostUpdate(const UpdateInfo &_info,
@@ -503,8 +404,6 @@ void MultiverseConnector::bind_request_meta_data()
     }
 
     request_meta_data_str = request_meta_data_json.toStyledString();
-
-    gzmsg << "Request JSON: " << request_meta_data_str << std::endl;
 }
 
 void MultiverseConnector::bind_api_callbacks()
@@ -517,7 +416,7 @@ void MultiverseConnector::bind_api_callbacks_response()
 
 void MultiverseConnector::bind_response_meta_data()
 {
-    gzmsg << "Response JSON: " << response_meta_data_json.toStyledString() << std::endl;
+    
 }
 
 void MultiverseConnector::init_send_and_receive_data()
