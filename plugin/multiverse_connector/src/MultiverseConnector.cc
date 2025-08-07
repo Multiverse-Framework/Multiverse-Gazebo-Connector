@@ -292,7 +292,6 @@ void MultiverseConnector::Update(
     sim::EntityComponentManager &_ecm)
 {
     int receive_id = 0;
-    gzmsg << "------" << std::endl;
     for (const std::pair<const std::string, std::set<std::string>> &receive_object : config.receive_objects)
     {
         const std::string &object_name = receive_object.first;
@@ -355,8 +354,6 @@ void MultiverseConnector::Update(
         {
             const Entity joint_entity = joint_entities[object_name];
             Joint joint = Joint(joint_entity);
-            gzmsg << "Setting joint [" << object_name << "] - " << joint_entity
-                  << " - cmd_joint_effort to " << tmp_cmd_joint_effort << std::endl;
             joint.SetForce(_ecm, {tmp_cmd_joint_effort});
         }
     }
