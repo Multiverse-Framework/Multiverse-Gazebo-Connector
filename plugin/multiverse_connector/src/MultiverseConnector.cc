@@ -237,6 +237,34 @@ void MultiverseConnector::Configure(const Entity &_entity,
                 }
                 return true;
             });
+        _ecm.Each<components::Joint, components::Name>(
+            [&](const Entity &entity,
+                const components::Joint *,
+                const components::Name *name) -> bool
+            {
+                const std::string &joint_name = name->Data();
+                if (receive_json.isMember(joint_name) || receive_json.isMember("joint"))
+                {
+                    if (config.receive_objects.find(joint_name) == config.receive_objects.end())
+                    {
+                        config.receive_objects[joint_name] = {};
+                    }
+                    for (const Json::Value &attribute_json : receive_json[receive_json.isMember(joint_name) ? joint_name : "joint"])
+                    {
+                        const std::string attribute_name = attribute_json.asString();
+                        if (strcmp(attribute_name.c_str(), "cmd_joint_torque") == 0 ||
+                            strcmp(attribute_name.c_str(), "cmd_joint_force") == 0)
+                        {
+                            if (joint_entities.find(joint_name) == link_entities.end())
+                            {
+                                joint_entities[joint_name] = entity;
+                            }
+                            config.receive_objects[joint_name].insert(attribute_name);
+                        }
+                    }
+                }
+                return true;
+            });
     }
 
     host = config.host;
@@ -264,6 +292,7 @@ void MultiverseConnector::Update(
     sim::EntityComponentManager &_ecm)
 {
     int receive_id = 0;
+    gzmsg << "------" << std::endl;
     for (const std::pair<const std::string, std::set<std::string>> &receive_object : config.receive_objects)
     {
         const std::string &object_name = receive_object.first;
@@ -321,11 +350,13 @@ void MultiverseConnector::Update(
             Link body = Link(body_entity);
             body.AddWorldWrench(_ecm, tmp_body_force, tmp_body_torque);
         }
-        if (receive_object.second.find("cmd_joint_torce") != receive_object.second.end() ||
-            receive_object.second.find("cmd_joint_forque") != receive_object.second.end())
+        if (receive_object.second.find("cmd_joint_torque") != receive_object.second.end() ||
+            receive_object.second.find("cmd_joint_force") != receive_object.second.end())
         {
             const Entity joint_entity = joint_entities[object_name];
             Joint joint = Joint(joint_entity);
+            gzmsg << "Setting joint [" << object_name << "] - " << joint_entity
+                  << " - cmd_joint_effort to " << tmp_cmd_joint_effort << std::endl;
             joint.SetForce(_ecm, {tmp_cmd_joint_effort});
         }
     }
