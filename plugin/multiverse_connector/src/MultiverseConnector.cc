@@ -129,6 +129,7 @@ void MultiverseConnector::Configure(const Entity &_entity,
                 const components::Joint *,
                 const components::Name *name) -> bool
             {
+                const Joint joint = Joint(entity);
                 const std::string &joint_name = name->Data();
                 if (send_json.isMember(joint_name) || send_json.isMember("joint"))
                 {
@@ -147,8 +148,8 @@ void MultiverseConnector::Configure(const Entity &_entity,
                         {
                             need_position = true;
                         }
-                        else if (strcmp(attribute_name.c_str(), "joint_linear_velocity") == 0 ||
-                                 strcmp(attribute_name.c_str(), "joint_angular_velocity") == 0)
+                        else if (strcmp(attribute_name.c_str(), "joint_linear_velocity") == 0 && joint.Type(_ecm) == sdf::JointType::PRISMATIC ||
+                                 strcmp(attribute_name.c_str(), "joint_angular_velocity") == 0 && joint.Type(_ecm) == sdf::JointType::REVOLUTE)
                         {
                             need_velocity = true;
                         }
@@ -242,6 +243,7 @@ void MultiverseConnector::Configure(const Entity &_entity,
                 const components::Joint *,
                 const components::Name *name) -> bool
             {
+                const Joint joint = Joint(entity);
                 const std::string &joint_name = name->Data();
                 if (receive_json.isMember(joint_name) || receive_json.isMember("joint"))
                 {
@@ -252,8 +254,8 @@ void MultiverseConnector::Configure(const Entity &_entity,
                     for (const Json::Value &attribute_json : receive_json[receive_json.isMember(joint_name) ? joint_name : "joint"])
                     {
                         const std::string attribute_name = attribute_json.asString();
-                        if (strcmp(attribute_name.c_str(), "cmd_joint_torque") == 0 ||
-                            strcmp(attribute_name.c_str(), "cmd_joint_force") == 0)
+                        if (strcmp(attribute_name.c_str(), "cmd_joint_torque") == 0 && joint.Type(_ecm) == sdf::JointType::REVOLUTE ||
+                            strcmp(attribute_name.c_str(), "cmd_joint_force") == 0 && joint.Type(_ecm) == sdf::JointType::PRISMATIC)
                         {
                             if (joint_entities.find(joint_name) == link_entities.end())
                             {
