@@ -130,6 +130,12 @@ void MultiverseConnector::Configure(const Entity &_entity,
                 const components::Name *name) -> bool
             {
                 const Joint joint = Joint(entity);
+                if (joint.Type(_ecm) != sdf::JointType::REVOLUTE &&
+                    joint.Type(_ecm) != sdf::JointType::PRISMATIC)
+                {
+                    gzmsg << "Joint [" << name->Data() << "] is not a revolute or prismatic joint, skipping." << std::endl;
+                    return true; // Skip non-revolute/prismatic joints
+                }
                 const std::string &joint_name = name->Data();
                 if (send_json.isMember(joint_name) || send_json.isMember("joint"))
                 {
@@ -143,13 +149,13 @@ void MultiverseConnector::Configure(const Entity &_entity,
                     for (const Json::Value &attribute_json : send_json[object_name])
                     {
                         const std::string &attribute_name = attribute_json.asString();
-                        if (strcmp(attribute_name.c_str(), "joint_angular_position") == 0 ||
-                            strcmp(attribute_name.c_str(), "joint_linear_position") == 0)
+                        if (strcmp(attribute_name.c_str(), "joint_angular_position") == 0 && joint.Type(_ecm) == sdf::JointType::REVOLUTE ||
+                            strcmp(attribute_name.c_str(), "joint_linear_position") == 0 && joint.Type(_ecm) == sdf::JointType::PRISMATIC)
                         {
                             need_position = true;
                         }
-                        else if (strcmp(attribute_name.c_str(), "joint_linear_velocity") == 0 && joint.Type(_ecm) == sdf::JointType::PRISMATIC ||
-                                 strcmp(attribute_name.c_str(), "joint_angular_velocity") == 0 && joint.Type(_ecm) == sdf::JointType::REVOLUTE)
+                        else if (strcmp(attribute_name.c_str(), "joint_linear_velocity") == 0 && joint.Type(_ecm) == sdf::JointType::REVOLUTE ||
+                                 strcmp(attribute_name.c_str(), "joint_angular_velocity") == 0 && joint.Type(_ecm) == sdf::JointType::PRISMATIC)
                         {
                             need_velocity = true;
                         }
@@ -244,6 +250,12 @@ void MultiverseConnector::Configure(const Entity &_entity,
                 const components::Name *name) -> bool
             {
                 const Joint joint = Joint(entity);
+                if (joint.Type(_ecm) != sdf::JointType::REVOLUTE &&
+                    joint.Type(_ecm) != sdf::JointType::PRISMATIC)
+                {
+                    gzmsg << "Joint [" << name->Data() << "] is not a revolute or prismatic joint, skipping." << std::endl;
+                    return true; // Skip non-revolute/prismatic joints
+                }
                 const std::string &joint_name = name->Data();
                 if (receive_json.isMember(joint_name) || receive_json.isMember("joint"))
                 {
@@ -405,11 +417,11 @@ void MultiverseConnector::Update(
             }
             if (send_object.second.find("angular_velocity") != send_object.second.end())
             {
-                auto ang_vel_ptr = _ecm.ComponentData<components::AngularVelocity>(body_entity);
+                auto ang_vel_ptr = _ecm.ComponentData<components::WorldAngularVelocity>(body_entity);
                 if (!ang_vel_ptr)
                 {
                     gzwarn << "Link [" << object_name
-                           << "] does not have a AngularVelocity component" << std::endl;
+                           << "] does not have a WorldAngularVelocity component" << std::endl;
                     continue;
                 }
                 tmp_body_angular_velocity = *ang_vel_ptr;
